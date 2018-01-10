@@ -10,8 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tatsushid/go-fastping"
+	"github.com/feixiao/go-fastping"
 )
+
+
+//  ./ping 172.28.104.222
 
 type response struct {
 	addr *net.IPAddr

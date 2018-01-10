@@ -180,7 +180,7 @@ func (p *Pinger) Network(network string) (string, error) {
 	origNet := p.network
 	switch network {
 	case "ip":
-		fallthrough
+		fallthrough  // fallthrough强制执行后面的case代码，fallthrough不会判断下一条case的expr结果是否为true。
 	case "udp":
 		p.network = network
 	default:
