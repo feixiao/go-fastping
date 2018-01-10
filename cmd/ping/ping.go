@@ -65,6 +65,7 @@ func main() {
 	results[ra.String()] = nil
 	p.AddIPAddr(ra)
 
+	// 设置处理函数
 	onRecv, onIdle := make(chan *response), make(chan bool)
 	p.OnRecv = func(addr *net.IPAddr, t time.Duration) {
 		onRecv <- &response{addr: addr, rtt: t}

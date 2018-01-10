@@ -40,7 +40,6 @@ package fastping
 import (
 	"errors"
 	"fmt"
-	"log"
 	"math/rand"
 	"net"
 	"sync"
@@ -50,6 +49,8 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+
+	lg "github.com/feixiao/logger"
 )
 
 const (
@@ -148,8 +149,7 @@ type Pinger struct {
 	OnRecv func(*net.IPAddr, time.Duration)
 	// OnIdle is called when MaxRTT time passed
 	OnIdle func()
-	// If Debug is true, it prints debug messages to stdout.
-	Debug bool
+	l  lg.Logger
 }
 
 // NewPinger returns a new Pinger struct pointer
@@ -168,7 +168,7 @@ func NewPinger() *Pinger {
 		MaxRTT:  time.Second,
 		OnRecv:  nil,
 		OnIdle:  nil,
-		Debug:   false,
+		l:   lg.NewDefaultLogger(lg.DEBUG),
 	}
 }
 
@@ -275,47 +275,6 @@ func (p *Pinger) RemoveIPAddr(ip *net.IPAddr) {
 	p.mu.Unlock()
 }
 
-// AddHandler adds event handler to Pinger. event arg should be "receive" or
-// "idle" string.
-//
-// **CAUTION** This function is deprecated. Please use OnRecv and OnIdle field
-// of Pinger struct to set following handlers.
-//
-// "receive" handler should be
-//
-//	func(addr *net.IPAddr, rtt time.Duration)
-//
-// type function. The handler is called with a response packet's source address
-// and its elapsed time when Pinger receives a response packet.
-//
-// "idle" handler should be
-//
-//	func()
-//
-// type function. The handler is called when MaxRTT time passed. For more
-// detail, please see Run() and RunLoop().
-func (p *Pinger) AddHandler(event string, handler interface{}) error {
-	switch event {
-	case "receive":
-		if hdl, ok := handler.(func(*net.IPAddr, time.Duration)); ok {
-			p.mu.Lock()
-			p.OnRecv = hdl
-			p.mu.Unlock()
-			return nil
-		}
-		return errors.New("receive event handler should be `func(*net.IPAddr, time.Duration)`")
-	case "idle":
-		if hdl, ok := handler.(func()); ok {
-			p.mu.Lock()
-			p.OnIdle = hdl
-			p.mu.Unlock()
-			return nil
-		}
-		return errors.New("idle event handler should be `func()`")
-	}
-	return errors.New("No such event: " + event)
-}
-
 // Run invokes a single send/receive procedure. It sends packets to all hosts
 // which have already been added by AddIP() etc. and wait those responses. When
 // it receives a response, it calls "receive" handler registered by AddHander().
@@ -371,9 +330,9 @@ func (p *Pinger) Done() <-chan bool {
 // Stop stops RunLoop(). It must be called after RunLoop(). If not, it causes
 // panic.
 func (p *Pinger) Stop() {
-	p.debugln("Stop(): close(p.ctx.stop)")
+	p.l.Debug("Stop(): close(p.ctx.stop)")
 	close(p.ctx.stop)
-	p.debugln("Stop(): <-p.ctx.done")
+	p.l.Debug("Stop(): <-p.ctx.done")
 	<-p.ctx.done
 }
 
@@ -391,7 +350,7 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 		p.mu.Lock()
 		p.ctx.err = err
 		p.mu.Unlock()
-		p.debugln("Run(): close(p.ctx.done)")
+		p.l.Debug("Run(): close(p.ctx.done)")
 		close(p.ctx.done)
 		return nil
 	}
@@ -399,7 +358,7 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 }
 
 func (p *Pinger) run(once bool) {
-	p.debugln("Run(): Start")
+	p.l.Debug("Run(): Start")
 	var conn, conn6 *icmp.PacketConn
 	if p.hasIPv4 {
 		if conn = p.listen(ipv4Proto[p.network], p.source); conn == nil {
@@ -419,7 +378,7 @@ func (p *Pinger) run(once bool) {
 	recvCtx := newContext()
 	wg := new(sync.WaitGroup)
 
-	p.debugln("Run(): call recvICMP()")
+	p.l.Debug("Run(): call recvICMP()")
 	if conn != nil {
 		wg.Add(1)
 		go p.recvICMP(conn, recv, recvCtx, wg)
@@ -429,7 +388,7 @@ func (p *Pinger) run(once bool) {
 		go p.recvICMP(conn6, recv, recvCtx, wg)
 	}
 
-	p.debugln("Run(): call sendICMP()")
+	p.l.Debug("Run(): call sendICMP()")
 	queue, err := p.sendICMP(conn, conn6)
 
 	ticker := time.NewTicker(p.MaxRTT)
@@ -438,10 +397,10 @@ mainloop:
 	for {
 		select {
 		case <-p.ctx.stop:
-			p.debugln("Run(): <-p.ctx.stop")
+			p.l.Debug("Run(): <-p.ctx.stop")
 			break mainloop
 		case <-recvCtx.done:
-			p.debugln("Run(): <-recvCtx.done")
+			p.l.Debug("Run(): <-recvCtx.done")
 			p.mu.Lock()
 			err = recvCtx.err
 			p.mu.Unlock()
@@ -456,32 +415,32 @@ mainloop:
 			if once || err != nil {
 				break mainloop
 			}
-			p.debugln("Run(): call sendICMP()")
+			p.l.Debug("Run(): call sendICMP()")
 			queue, err = p.sendICMP(conn, conn6)
 		case r := <-recv:
-			p.debugln("Run(): <-recv")
+			p.l.Debug("Run(): <-recv")
 			p.procRecv(r, queue)
 		}
 	}
 
 	ticker.Stop()
 
-	p.debugln("Run(): close(recvCtx.stop)")
+	p.l.Debug("Run(): close(recvCtx.stop)")
 	close(recvCtx.stop)
-	p.debugln("Run(): wait recvICMP()")
+	p.l.Debug("Run(): wait recvICMP()")
 	wg.Wait()
 
 	p.mu.Lock()
 	p.ctx.err = err
 	p.mu.Unlock()
 
-	p.debugln("Run(): close(p.ctx.done)")
+	p.l.Debug("Run(): close(p.ctx.done)")
 	close(p.ctx.done)
-	p.debugln("Run(): End")
+	p.l.Debug("Run(): End")
 }
 
 func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) (map[string]*net.IPAddr, error) {
-	p.debugln("sendICMP(): Start")
+	p.l.Debug("sendICMP(): Start")
 	p.mu.Lock()
 	p.id = rand.Intn(0xffff)
 	p.seq = rand.Intn(0xffff)
@@ -530,7 +489,7 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) (map[string]*net.IPAddr,
 			dst = &net.UDPAddr{IP: addr.IP, Zone: addr.Zone}
 		}
 
-		p.debugln("sendICMP(): Invoke goroutine")
+		p.l.Debug("sendICMP(): Invoke goroutine")
 		wg.Add(1)
 		go func(conn *icmp.PacketConn, ra net.Addr, b []byte) {
 			for {
@@ -543,58 +502,58 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) (map[string]*net.IPAddr,
 				}
 				break
 			}
-			p.debugln("sendICMP(): WriteTo End")
+			p.l.Debug("sendICMP(): WriteTo End")
 			wg.Done()
 		}(cn, dst, bytes)
 	}
 	wg.Wait()
-	p.debugln("sendICMP(): End")
+	p.l.Debug("sendICMP(): End")
 	return queue, nil
 }
 
 func (p *Pinger) recvICMP(conn *icmp.PacketConn, recv chan<- *packet, ctx *context, wg *sync.WaitGroup) {
-	p.debugln("recvICMP(): Start")
+	p.l.Debug("recvICMP(): Start")
 	for {
 		select {
 		case <-ctx.stop:
-			p.debugln("recvICMP(): <-ctx.stop")
+			p.l.Debug("recvICMP(): <-ctx.stop")
 			wg.Done()
-			p.debugln("recvICMP(): wg.Done()")
+			p.l.Debug("recvICMP(): wg.Done()")
 			return
 		default:
 		}
 
 		bytes := make([]byte, 512)
 		conn.SetReadDeadline(time.Now().Add(time.Millisecond * 100))
-		p.debugln("recvICMP(): ReadFrom Start")
+		p.l.Debug("recvICMP(): ReadFrom Start")
 		_, ra, err := conn.ReadFrom(bytes)
-		p.debugln("recvICMP(): ReadFrom End")
+		p.l.Debug("recvICMP(): ReadFrom End")
 		if err != nil {
 			if neterr, ok := err.(*net.OpError); ok {
 				if neterr.Timeout() {
-					p.debugln("recvICMP(): Read Timeout")
+					p.l.Debug("recvICMP(): Read Timeout")
 					continue
 				} else {
-					p.debugln("recvICMP(): OpError happen", err)
+					p.l.Debug("recvICMP(): OpError happen", err)
 					p.mu.Lock()
 					ctx.err = err
 					p.mu.Unlock()
-					p.debugln("recvICMP(): close(ctx.done)")
+					p.l.Debug("recvICMP(): close(ctx.done)")
 					close(ctx.done)
-					p.debugln("recvICMP(): wg.Done()")
+					p.l.Debug("recvICMP(): wg.Done()")
 					wg.Done()
 					return
 				}
 			}
 		}
-		p.debugln("recvICMP(): p.recv <- packet")
+		p.l.Debug("recvICMP(): p.recv <- packet")
 
 		select {
 		case recv <- &packet{bytes: bytes, addr: ra}:
 		case <-ctx.stop:
-			p.debugln("recvICMP(): <-ctx.stop")
+			p.l.Debug("recvICMP(): <-ctx.stop")
 			wg.Done()
-			p.debugln("recvICMP(): wg.Done()")
+			p.l.Debug("recvICMP(): wg.Done()")
 			return
 		}
 	}
@@ -665,21 +624,5 @@ func (p *Pinger) procRecv(recv *packet, queue map[string]*net.IPAddr) {
 		if handler != nil {
 			handler(ipaddr, rtt)
 		}
-	}
-}
-
-func (p *Pinger) debugln(args ...interface{}) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.Debug {
-		log.Println(args...)
-	}
-}
-
-func (p *Pinger) debugf(format string, args ...interface{}) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.Debug {
-		log.Printf(format, args...)
 	}
 }
