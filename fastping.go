@@ -168,8 +168,13 @@ func NewPinger() *Pinger {
 		MaxRTT:  time.Second,
 		OnRecv:  nil,
 		OnIdle:  nil,
-		l:   lg.NewDefaultLogger(lg.DEBUG),
+		l:   lg.NewDefaultLogger(lg.ERROR),
 	}
+}
+
+// SetLogger 设置日志输出对象
+func (p *Pinger) SetLogger(l lg.Logger) {
+	p.l = l
 }
 
 // Network sets a network endpoints for ICMP ping and returns the previous

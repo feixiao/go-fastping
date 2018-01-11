@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/feixiao/go-fastping"
+	//"github.com/feixiao/log4go"
 )
 
 
@@ -42,10 +43,14 @@ func main() {
 		source = flag.Arg(1)
 	}
 
+	
 	p := fastping.NewPinger()
+	//p.SetLogger(&log4go.Global)
+	
 	if useUDP {
 		p.Network("udp")
 	}
+
 
 	netProto := "ip4:icmp"
 	if strings.Index(hostname, ":") != -1 {

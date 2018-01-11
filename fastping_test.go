@@ -18,7 +18,6 @@ func TestSource(t *testing.T) {
 		{firstAddr: "192.0.2", invalid: true},
 	} {
 		p := NewPinger()
-
 		origSource, err := p.Source(tt.firstAddr)
 		if tt.invalid {
 			if err == nil {
